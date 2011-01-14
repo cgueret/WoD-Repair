@@ -1,0 +1,8 @@
+Load domains and ranges
+Domain and range known for 4612 predicates
+Load predicates dict
+Loaded 4386 entries from dict
+Add internal connections to the profiles
+Add connections between namespaces to the profiles
+Save profile of 12125292 nodes
+Save a network with 25502748 edges

@@ -1,0 +1,6 @@
+.project
+.cproject
+data/
+*.o
+generate_network
+generate_raw_data
