@@ -4,7 +4,7 @@
 // Custom types
 typedef google::sparse_hash_map<std::string, unsigned int, std::tr1::hash<std::string> > t_dict;
 typedef t_dict::const_iterator t_dict_it;
-typedef google::sparse_hash_map<std::string, std::string, std::tr1::hash<std::string> > t_reverse_dict;
+typedef google::sparse_hash_map<unsigned int, std::string, std::tr1::hash<unsigned int> > t_reverse_dict;
 typedef t_reverse_dict::const_iterator t_reverse_dict_it;
 
 /*

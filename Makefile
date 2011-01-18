@@ -1,4 +1,4 @@
-CXXFLAGS = -O3 -Wall -fmessage-length=0 -std=c++0x -pipe
+CXXFLAGS = -O3  -Wall -fmessage-length=0 -std=c++0x -pipe
 
 LIBS_GEN = -lz -lpcre -lboost_thread-mt
 OBJS_GEN = generate_raw_data.o
@@ -8,7 +8,7 @@ LIBS_NET = -lz -lpcre
 OBJS_NET = generate_network.o
 TARGET_NET = generate_network
 
-LIBS_PR = -lz -lpcre
+LIBS_PR = -lz -lpcre -lm
 OBJS_PR = process_network.o
 TARGET_PR = process_network
 
