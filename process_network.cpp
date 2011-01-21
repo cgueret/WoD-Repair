@@ -52,7 +52,7 @@ void load_dictionaries() {
 	char* buffer = new char[buffer_size];
 	gzFile handler;
 
-	std::cout << "Load ranges\n";
+	std::cout << "Load dictionary ranges\n";
 	NB_RANGES = 0;
 	handler = gzopen("data/network/dictionary_ranges.csv.gz", "r");
 	while (gzgets(handler, buffer, buffer_size) != NULL) {
@@ -66,7 +66,7 @@ void load_dictionaries() {
 	}
 	gzclose(handler);
 
-	std::cout << "Load domains\n";
+	std::cout << "Load dictionary domains\n";
 	NB_DOMAINS = 0;
 	handler = gzopen("data/network/dictionary_domains.csv.gz", "r");
 	while (gzgets(handler, buffer, buffer_size) != NULL) {
@@ -80,8 +80,8 @@ void load_dictionaries() {
 	}
 	gzclose(handler);
 
-	std::cout << "Load namespaces\n";
-	handler = gzopen("data/raw/dictionary_namespace.csv.gz", "r");
+	std::cout << "Load dictionary nodes\n";
+	handler = gzopen("data/network/dictionary_nodes.csv.gz", "r");
 	while (gzgets(handler, buffer, buffer_size) != NULL) {
 		if (buffer[0] == '#')
 			continue;
@@ -99,8 +99,6 @@ void load_dictionaries() {
  *
  */
 void load_profiles() {
-	std::cout << "Load profiles" << std::endl;
-
 	// Vars for a raw
 	char type;
 	unsigned int name_id;
@@ -139,7 +137,7 @@ void load_profiles() {
 	gzclose(handler);
 	delete buffer;
 
-	std::cout << "Loaded " << profiles.size() << std::endl;
+	std::cout << "Loaded " << profiles.size() << " profiles"<< std::endl;
 }
 
 /*
@@ -168,9 +166,9 @@ void compute_and_save_tf_idf() {
 	std::ofstream handle;
 	std::ofstream handle2;
 	handle.open("data/network/profiles-tfidf.csv");
-	handle << "# Domain/Range id predicate value" << std::endl;
+	//handle << "# Domain/Range id predicate value" << std::endl;
 	handle2.open("data/network/profiles-tfidf-clear.csv");
-	handle2 << "# Domain/Range id predicate value" << std::endl;
+	//handle2 << "# Domain/Range id predicate value" << std::endl;
 
 	// Compute the tfidf for each term
 	double total = 0;
@@ -213,7 +211,6 @@ int main() {
 	load_dictionaries();
 
 	// Load the profiles
-	profiles.resize(13000000);
 	load_profiles();
 
 	// Compute tf_idf

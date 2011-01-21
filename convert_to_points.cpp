@@ -14,7 +14,7 @@
 #include "kmlocal-1.7.2/src/KMlocal.h"
 
 // Convert some predicate text to a dim index
-t_dict pred_to_dim;
+std::vector<std::string> dims;
 
 typedef struct {
 	unsigned int id;
@@ -31,6 +31,14 @@ unsigned int get_point(unsigned int id) {
 	return -1;
 }
 
+unsigned int get_dim(std::string& name) {
+	for (size_t i=0; i < dims.size(); ++i)
+		if (dims[i] == name)
+			return i;
+	dims.push_back(name);
+	return dims.size()-1;
+}
+
 /*
  * Main executable part
  */
@@ -41,48 +49,32 @@ int main() {
 	unsigned int predicate_id;
 	double tfidf;
 
-	int buffer_size = 5 * 1024 * 1024;
-	char* buffer = new char[buffer_size];
-	gzFile handler;
+	std::ifstream inFile;
 
 	// Count the dims
-	handler = gzopen("data/network/profiles-tfidf.csv.gz", "r");
-	while (gzgets(handler, buffer, buffer_size) != NULL) {
-		if (buffer[0] == '#')
-			continue;
-
-		// Read the line
-		std::stringstream ss(buffer);
-		ss >> type >> name_id >> predicate_id >> tfidf;
-		if ((type != 'D') && (type != 'R'))
-			continue;
+	inFile.open("data/network/profiles-tfidf.csv");
+	while (!inFile.eof()) {
+		inFile >> type >> name_id >> predicate_id >> tfidf;
 
 		// Create the new dim if needed
 		std::ostringstream tmp;
 		tmp << type << " " << predicate_id;
 		std::string label = tmp.str();
-		if (pred_to_dim.find(label) == pred_to_dim.end())
-			pred_to_dim[label] = pred_to_dim.size();
+		get_dim(label);
 	}
-	gzclose(handler);
-	std::cout << "Dimensions: " << pred_to_dim.size() << std::endl;
+	inFile.close();
+	std::cout << "Dimensions: " << dims.size() << std::endl;
 
 	// Load the points
-	handler = gzopen("data/network/profiles-tfidf.csv.gz", "r");
-	while (gzgets(handler, buffer, buffer_size) != NULL) {
-		if (buffer[0] == '#')
-			continue;
-
-		// Read the line
-		std::stringstream ss(buffer);
-		ss >> type >> name_id >> predicate_id >> tfidf;
-		if ((type != 'D') && (type != 'R'))
-			continue;
+	inFile.open("data/network/profiles-tfidf.csv");
+	while (!inFile.eof()) {
+		inFile >> type >> name_id >> predicate_id >> tfidf;
 
 		// Get the dim index
 		std::ostringstream tmp;
 		tmp << type << " " << predicate_id;
-		unsigned int dim = pred_to_dim[tmp.str()];
+		std::string label = tmp.str();
+		unsigned int dim = get_dim(label);
 
 		// Get or create the data point
 		t_point* point = NULL;
@@ -92,14 +84,19 @@ int main() {
 		if (point == NULL) {
 			point = new t_point();
 			point->id = name_id;
-			point->data.resize(pred_to_dim.size(), 0);
+			point->data.resize(dims.size(), 0);
 			points.push_back(point);
 		}
 
 		// Set the value
 		point->data[dim] = tfidf;
 	}
+	inFile.close();
 	std::cout << "Points: " << points.size() << std::endl;
+
+	unsigned int buffer_size = 5 * 1024 * 1024;
+	char* buffer = new char[buffer_size];
+	gzFile handler;
 
 	// Load the network
 	unsigned int start;
@@ -121,12 +118,28 @@ int main() {
 		// Store connection
 		points[start_point]->arcs.push_back(end_point);
 	}
-
 	gzclose(handler);
+
+	// Load the dict
+	t_reverse_dict d;
+	handler = gzopen("data/network/dictionary_nodes.csv.gz", "r");
+	while (gzgets(handler, buffer, buffer_size) != NULL) {
+		if (buffer[0] == '#')
+			continue;
+
+		// Read the line
+		std::stringstream ss(buffer);
+		std::string name;
+		unsigned int id;
+		ss >> name >> id;
+		d[id] = name;
+	}
+	gzclose(handler);
+
 	delete buffer;
 
 	// Load the points into KML structure
-	KMdata dataPts(pred_to_dim.size(), points.size());
+	KMdata dataPts(dims.size(), points.size());
 	for (size_t p = 0; p < points.size(); ++p)
 		for (size_t i = 0; i < points[p]->data.size(); ++i)
 			dataPts[p][i] = points[p]->data[i];
@@ -134,8 +147,8 @@ int main() {
 	dataPts.buildKcTree(); // build filtering structure
 
 	// Run clustering algorithm
-	int k = 6; //26
-	KMterm term(500, 0, 0, 0, // run for 100 stages
+	int k = 20; //26
+	KMterm term(1000, 0, 0, 0, // run for 100 stages
 			0.10, // min consec RDL
 			0.10, // min accum RDL
 			3, // max run stages
@@ -158,14 +171,14 @@ int main() {
 	handle << "*Network lod-cloud.net" << std::endl;
 	handle << "*Vertices " << points.size() << std::endl;
 	for (size_t i = 0; i < points.size(); ++i)
-		handle << "\t" << i + 1 << "\t" << points[i]->id << std::endl;
+		handle << "\t" << i + 1 << "\t\"" << d[points[i]->id] << "\"" << std::endl;
 	handle << "*Arcs" << std::endl;
 	for (size_t i = 0; i < points.size(); ++i)
 		for (size_t j = 0; j < points[i]->arcs.size(); ++j)
-			handle << "\t" << i + 1 << "\t" << (points[i]->arcs[j]) + 1 << " 1.0" << std::endl;
+			handle << "\t" << i + 1 << "\t" << (points[i]->arcs[j]) + 1 << "\t1.0" << std::endl;
 	handle << "*Partition lod-cloud_profiles" << std::endl;
 	handle << "*Vertices " << points.size() << std::endl;
 	for (size_t i = 0; i < points.size(); ++i)
-		handle << "\t" << closeCtr[i]+1 << std::endl;
+		handle << "\t" << closeCtr[i] + 1 << std::endl;
 	handle.close();
 }

@@ -31,27 +31,26 @@ typedef struct {
 typedef google::sparse_hash_map<std::string, t_domains_and_ranges*, std::tr1::hash<std::string> > t_domain_range;
 typedef t_domain_range::const_iterator t_domain_range_it;
 
+// Profiles for the namespaces
 typedef google::sparse_hash_map<unsigned int, unsigned int, std::tr1::hash<unsigned int> > t_map;
-typedef t_map::const_iterator t_map_it;
-typedef struct {
-	unsigned int id_raw_data;
+typedef struct __profile__ {
+	t_set ids_raw_data;
+	unsigned int final_id;
 	std::string ns_name;
-	unsigned int triples;
-	unsigned int links;
-	t_map* domains;
-	t_map* ranges;
+	unsigned int nb_triples;
+	t_map domains;
+	t_map ranges;
+	t_map connections;
 } t_profile;
-typedef google::sparse_hash_map<unsigned int, t_profile*, std::tr1::hash<unsigned int> > t_profiles;
-typedef t_profiles::const_iterator t_profile_it;
+typedef std::vector<t_profile*> t_profiles;
+t_profiles profiles;
+t_set valid_raw_ids;
 
 // Store the domain and ranges of predicates
 t_domain_range domain_range;
 
 // Store the topology of the network as a dict "id_ns id_ns"->count
 t_dict network;
-
-// Namespaces profiles as "id_ns" -> t_domains_and_ranges_counter
-t_profiles namespaces_profiles;
 
 // Predicates dictionary as dict id->string
 t_reverse_dict predicates_dict;
@@ -83,29 +82,19 @@ unsigned int string_to_index(std::string label, t_dict& dict) {
 /*
  * Return the profile of a given identifier
  */
-t_profile* get_profile(unsigned int id, bool create) {
-	t_profile* result;
-	t_profile_it it = namespaces_profiles.find(id);
-	if (it == namespaces_profiles.end()) {
-		if (!create)
-			return NULL;
+unsigned int get_profile_index(unsigned int id) {
+	for (size_t i = 0; i < profiles.size(); ++i)
+		if (profiles[i]->ids_raw_data.find(id) != profiles[i]->ids_raw_data.end())
+			return i;
 
-		result = new t_profile();
-		result->domains = new t_map();
-		result->ranges = new t_map();
-		result->links = 0;
-		result->triples = 0;
-		namespaces_profiles[id] = result;
-	} else {
-		result = it->second;
-	}
-	return result;
+	std::cout << "BUG! Non existent profile asked" << std::endl;
+	return profiles.size() + 1;
 }
 
 /*
  * Loads the list of namespaces, including the white list
  */
-void load_namespaces_list() {
+void init() {
 	// Load the white list
 	std::string name;
 	std::vector<std::string> white_list;
@@ -116,14 +105,23 @@ void load_namespaces_list() {
 		white_list.push_back(name);
 	}
 	inFile.close();
-	std::cout << "Loaded " << white_list.size() << " namespaces" << std::endl;
+	std::cout << "Loaded " << white_list.size() << " namespaces from the white list" << std::endl;
+
+	// Resize the profiles vector to the number of namespaces
+	profiles.resize(white_list.size());
+	for (size_t i = 0; i < profiles.size(); ++i) {
+		profiles[i] = new t_profile();
+		profiles[i]->ns_name = white_list[i];
+		profiles[i]->nb_triples = 0;
+		profiles[i]->final_id = 0;
+	}
 
 	// Load the network namespaces and prepare the profiles
 	std::string ns;
 	unsigned int id;
 	int buffer_size = 5 * 1024 * 1024;
 	char* buffer = new char[buffer_size];
-	gzFile handler = gzopen("data/raw/dictionary_namespaces.csv.gz", "r");
+	gzFile handler = gzopen("data/raw/dictionary_namespace.csv.gz", "r");
 	while (gzgets(handler, buffer, buffer_size) != NULL) {
 		if (buffer[0] == '#')
 			continue;
@@ -132,21 +130,30 @@ void load_namespaces_list() {
 		std::stringstream ss(buffer);
 		ss >> ns >> id;
 
+		// Find the right profile
+		unsigned int index = profiles.size() * 4;
+		for (size_t i = 0; (i < profiles.size()) && (index > profiles.size()); ++i) {
+			size_t l = ns.size();
+			if (white_list[i].size() < l)
+				l = white_list[i].size();
+			if (ns.compare(0, l, white_list[i]) == 0)
+				index = i;
+		}
+
+		// If no matching namespace has been found, ignore
+		if (index > profiles.size())
+			continue;
+
+		// Append the raw data id to the list of ids for this namespace
+		profiles[index]->ids_raw_data.insert(id);
+		valid_raw_ids.insert(id);
 	}
 
-	std::cout << "Prepared " << namespaces_profiles.size() << " profiles" << std::endl;
-}
-
-inline std::string get_ns(const char* text, int length) {
-	// Iterate over all the ns until a good one is found
-	for (ns_it = ns.begin(); ns_it != ns.end(); ns_it++) {
-		unsigned int size = length;
-		if (ns_it->first.size() < size)
-			size = ns_it->first.size();
-		if (strncmp(text, ns_it->first.c_str(), size) == 0)
-			return ns_it->second;
-	}
-	return ERROR;
+	size_t c = 0;
+	for (size_t i = 0; i < profiles.size(); ++i)
+		if (profiles[i]->ids_raw_data.size() > 0)
+			c++;
+	std::cout << "Found " << c << " profiles" << std::endl;
 }
 
 /*
@@ -261,6 +268,10 @@ void load_internal_connections() {
 		std::stringstream ss(buffer);
 		ss >> name_id >> predicate_id >> count;
 
+		// If that id does not match a profile, ignore
+		if (valid_raw_ids.find(name_id) == valid_raw_ids.end())
+			continue;
+
 		// If we don't have domain/ranges about that predicate ignore it
 		t_reverse_dict_it it = predicates_dict.find(predicate_id);
 		if (it == predicates_dict.end())
@@ -271,29 +282,32 @@ void load_internal_connections() {
 		t_domains_and_ranges* record = domain_range.find(pred_str)->second;
 
 		// Get the relevant profile
-		t_profile* profile = get_profile(name_id, true);
+		t_profile* profile = profiles[get_profile_index(name_id)];
 
 		// Increment the triples
-		profile->triples++;
+		profile->nb_triples++;
 
 		// Append domains and ranges
 		foreach ( unsigned int domain, record->domains)
 					{
-						t_map_it a = profile->domains->find(domain);
-						unsigned int v = (a == profile->domains->end() ? 0 : a->second);
-						(*profile->domains)[domain] = v + count;
+						t_map::const_iterator a = profile->domains.find(domain);
+						unsigned int v = (a == profile->domains.end() ? 0 : a->second);
+						profile->domains[domain] = v + count;
 					}
 		foreach ( unsigned int range, record->ranges)
 					{
-						t_map_it a = profile->ranges->find(range);
-						unsigned int v = (a == profile->ranges->end() ? 0 : a->second);
-						(*profile->ranges)[range] = v + count;
+						t_map::const_iterator a = profile->ranges.find(range);
+						unsigned int v = (a == profile->ranges.end() ? 0 : a->second);
+						profile->ranges[range] = v + count;
 					}
 	}
 	gzclose(handler);
 	delete buffer;
 }
 
+/*
+ *
+ */
 void load_other_connections() {
 	std::cout << "Add connections between namespaces to the profiles" << std::endl;
 
@@ -315,51 +329,37 @@ void load_other_connections() {
 		std::stringstream ss(buffer);
 		ss >> start_id >> end_id >> pred_id >> count;
 
-		// If we don't have domain/ranges about that predicate ignore it
-		t_reverse_dict_it it = predicates_dict.find(pred_id);
-		if (it == predicates_dict.end())
+		// If that id does not match a profile, ignore the triple
+		if (valid_raw_ids.find(start_id) == valid_raw_ids.end())
 			continue;
 
-		// Get the domain and ranges
-		std::string pred_str = it->second;
-		//t_domains_and_ranges* record = domain_range.find(pred_str)->second;
+		// Get the profile
+		t_profile* profile = profiles[get_profile_index(start_id)];
 
-		// Get the relevant profiles
-		t_profile* start_profile = get_profile(start_id, true);
-		//t_profile* end_profile = get_profile(end_id, true);
-		//if (end_profile == NULL)
-		//	continue;
+		// Add domain/range if we have the information
+		t_reverse_dict_it it = predicates_dict.find(pred_id);
+		if (it != predicates_dict.end()) {
+			// Get the domain and ranges
+			t_domains_and_ranges* record = domain_range.find(it->second)->second;
 
-		// Append domain of relation to range of start
-		foreach ( unsigned int domain, record->domains)
-					{
-						t_map_it a = start_profile->ranges->find(domain);
-						unsigned int v = (a == start_profile->ranges->end() ? 0 : a->second);
-						(*start_profile->ranges)[domain] = v + count;
-					}
-		start_profile->links++;
+			// Append domain of relation to range of start
+			foreach ( unsigned int domain, record->domains)
+						{
+							t_map::const_iterator a = profile->ranges.find(domain);
+							unsigned int v = (a == profile->ranges.end() ? 0 : a->second);
+							profile->ranges[domain] = v + count;
+						}
+		}
 
-		start_profile->triples++;
+		// If we don't know the destination, skip adding an edge
+		if (valid_raw_ids.find(end_id) == valid_raw_ids.end())
+			continue;
 
-		/*
-		 // Append range of relation to domain of end
-		 foreach ( unsigned int range, record->ranges)
-		 {
-		 t_map_it a = end_profile->domains->find(range);
-		 unsigned int v = (a == end_profile->domains->end() ? 0 : a->second);
-		 (*end_profile->domains)[range] = v + count;
-		 }
-		 //end_profile->links++;
-		 */
-
-		// Store that edge into the network
-		std::ostringstream edge_label;
-		edge_label << start_id << " " << end_id;
-		std::string edge = edge_label.str();
-		t_dict_it it2 = network.find(edge);
-		unsigned int v = (it2 == network.end() ? 0 : it2->second);
-		network[edge] = v + 1;
-
+		// Add the edge to the existing edges
+		unsigned int index_target = get_profile_index(end_id);
+		t_map::const_iterator a = profile->connections.find(index_target);
+		unsigned int v = (a == profile->connections.end() ? 0 : a->second);
+		profile->connections[index_target] = v + count;
 	}
 	gzclose(handler);
 	delete buffer;
@@ -370,80 +370,92 @@ void load_other_connections() {
  */
 void save_files() {
 	std::ofstream handle;
-	t_set whitelist;
+	std::ofstream handle_profile;
+	std::ofstream handle_network;
 
-	std::cout << "Save profile of " << namespaces_profiles.size() << " nodes" << std::endl;
-	handle.open("data/network/profiles.csv");
-	handle << "# Domain/Range id predicate count" << std::endl;
-	for (t_profile_it it = namespaces_profiles.begin(); it != namespaces_profiles.end(); it++) {
-		if ((it->second->domains->size() == 0) && (it->second->ranges->size() == 0))
+	// Examine all the profiles filter and assign final ids
+	unsigned int final = 1;
+	for (size_t i = 0; i < profiles.size(); ++i) {
+		// Ignore the profile if we found no domain or range
+		if ((profiles[i]->domains.size() == 0) && (profiles[i]->ranges.size() == 0))
 			continue;
 
-		if (it->second->triples < 50)
-			continue;
-
-		whitelist.insert(it->first);
-		for (t_map_it it2 = it->second->domains->begin(); it2 != it->second->domains->end(); it2++)
-			handle << "D " << it->first << " " << it2->first << " " << it2->second << std::endl;
-		for (t_map_it it2 = it->second->ranges->begin(); it2 != it->second->ranges->end(); it2++)
-			handle << "R " << it->first << " " << it2->first << " " << it2->second << std::endl;
+		// Assign a final id
+		profiles[i]->final_id = final;
+		final++;
 	}
-	handle.close();
-	std::cout << "Ok for " << whitelist.size() << " nodes" << std::endl;
 
-	std::cout << "Save a network with " << network.size() << " edges" << std::endl;
-	handle.open("data/network/network.csv");
-	handle << "# start end count" << std::endl;
-	unsigned int c = 0;
-	for (t_dict_it it = network.begin(); it != network.end(); it++) {
-		std::stringstream ss(it->first);
-		unsigned int start_id;
-		unsigned int end_id;
-		ss >> start_id >> end_id;
-		if ((whitelist.find(start_id) != whitelist.end()) && (whitelist.find(end_id) != whitelist.end())) {
-			handle << it->first << " " << it->second << std::endl;
-			c++;
-		}
-	}
+	std::cout << "Save nodes dictionary" << std::endl;
+	handle.open("data/network/dictionary_nodes.csv");
+	handle << "# Node index" << std::endl;
+	for (size_t i = 0; i < profiles.size(); ++i)
+		if (profiles[i]->final_id != 0)
+			handle << profiles[i]->ns_name << " " << profiles[i]->final_id << std::endl;
 	handle.close();
-	std::cout << "Ok for " << c << " edges" << std::endl;
 
 	std::cout << "Save range dictionary" << std::endl;
 	handle.open("data/network/dictionary_ranges.csv");
-	handle << "# resource index " << std::endl;
+	handle << "# Resource index " << std::endl;
 	for (t_dict_it it = ranges_dict.begin(); it != ranges_dict.end(); it++)
 		handle << it->first << " " << it->second << std::endl;
 	handle.close();
 
 	std::cout << "Save domain dictionary" << std::endl;
 	handle.open("data/network/dictionary_domains.csv");
-	handle << "# resource index " << std::endl;
+	handle << "# Resource index " << std::endl;
 	for (t_dict_it it = domains_dict.begin(); it != domains_dict.end(); it++)
 		handle << it->first << " " << it->second << std::endl;
 	handle.close();
+
+	std::cout << "Save the profile of the nodes and the network" << std::endl;
+	handle_profile.open("data/network/profiles.csv");
+	handle_profile << "# Domain/Range id predicate count" << std::endl;
+	handle_network.open("data/network/network.csv");
+	handle_network << "# Start end count" << std::endl;
+	for (size_t i = 0; i < profiles.size(); ++i) {
+		// Skip non validated profiles
+		if (profiles[i]->final_id == 0)
+			continue;
+
+		// Write domain and range
+		for (t_map::const_iterator it = profiles[i]->domains.begin(); it != profiles[i]->domains.end(); it++)
+			handle_profile << "D " << profiles[i]->final_id << " " << it->first << " " << it->second << std::endl;
+		for (t_map::const_iterator it = profiles[i]->ranges.begin(); it != profiles[i]->ranges.end(); it++)
+			handle_profile << "R " << profiles[i]->final_id << " " << it->first << " " << it->second << std::endl;
+
+		// Write connections if the target has been validated
+		for (t_map::const_iterator it = profiles[i]->connections.begin(); it != profiles[i]->connections.end(); it++)
+			if (profiles[it->first]->final_id != 0)
+				handle_network << profiles[i]->final_id << " " << profiles[it->first]->final_id << " " << it->second
+						<< std::endl;
+
+	}
+	handle_network.close();
+	handle_profile.close();
 }
+
 
 /*
  * Main executable part
  */
 int main() {
-	// Load list of namespaces
-	load_namespaces_list();
+// Init all the data structures
+init();
 
-	// Load the domain and ranges
-	load_domains_and_ranges();
+// Load the domain and ranges
+load_domains_and_ranges();
 
-	// Load the necessary part of the predicate dictionary
-	load_predicate_dictionary();
+// Load the necessary part of the predicate dictionary
+load_predicate_dictionary();
 
-	// Parse internal connections to create the profile
-	load_internal_connections();
+// Parse internal connections to create the profile
+load_internal_connections();
 
-	// Parse internal connections to create the profile
-	load_other_connections();
+// Parse internal connections to create the profile
+load_other_connections();
 
-	// Save node profiles
-	save_files();
+// Save node profiles
+save_files();
 
-	return 0;
+return 0;
 }
