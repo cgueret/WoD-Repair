@@ -34,10 +34,12 @@ typedef t_domain_range::const_iterator t_domain_range_it;
 typedef google::sparse_hash_map<unsigned int, unsigned int, std::tr1::hash<unsigned int> > t_map;
 typedef t_map::const_iterator t_map_it;
 typedef struct {
-	t_map* domains;
-	t_map* ranges;
+	unsigned int id_raw_data;
+	std::string ns_name;
 	unsigned int triples;
 	unsigned int links;
+	t_map* domains;
+	t_map* ranges;
 } t_profile;
 typedef google::sparse_hash_map<unsigned int, t_profile*, std::tr1::hash<unsigned int> > t_profiles;
 typedef t_profiles::const_iterator t_profile_it;
@@ -98,6 +100,53 @@ t_profile* get_profile(unsigned int id, bool create) {
 		result = it->second;
 	}
 	return result;
+}
+
+/*
+ * Loads the list of namespaces, including the white list
+ */
+void load_namespaces_list() {
+	// Load the white list
+	std::string name;
+	std::vector<std::string> white_list;
+	std::ifstream inFile;
+	inFile.open("data/raw/white_list.txt");
+	while (!inFile.eof()) {
+		inFile >> name;
+		white_list.push_back(name);
+	}
+	inFile.close();
+	std::cout << "Loaded " << white_list.size() << " namespaces" << std::endl;
+
+	// Load the network namespaces and prepare the profiles
+	std::string ns;
+	unsigned int id;
+	int buffer_size = 5 * 1024 * 1024;
+	char* buffer = new char[buffer_size];
+	gzFile handler = gzopen("data/raw/dictionary_namespaces.csv.gz", "r");
+	while (gzgets(handler, buffer, buffer_size) != NULL) {
+		if (buffer[0] == '#')
+			continue;
+
+		// Read the line
+		std::stringstream ss(buffer);
+		ss >> ns >> id;
+
+	}
+
+	std::cout << "Prepared " << namespaces_profiles.size() << " profiles" << std::endl;
+}
+
+inline std::string get_ns(const char* text, int length) {
+	// Iterate over all the ns until a good one is found
+	for (ns_it = ns.begin(); ns_it != ns.end(); ns_it++) {
+		unsigned int size = length;
+		if (ns_it->first.size() < size)
+			size = ns_it->first.size();
+		if (strncmp(text, ns_it->first.c_str(), size) == 0)
+			return ns_it->second;
+	}
+	return ERROR;
 }
 
 /*
@@ -224,6 +273,9 @@ void load_internal_connections() {
 		// Get the relevant profile
 		t_profile* profile = get_profile(name_id, true);
 
+		// Increment the triples
+		profile->triples++;
+
 		// Append domains and ranges
 		foreach ( unsigned int domain, record->domains)
 					{
@@ -237,8 +289,6 @@ void load_internal_connections() {
 						unsigned int v = (a == profile->ranges->end() ? 0 : a->second);
 						(*profile->ranges)[range] = v + count;
 					}
-
-		profile->triples++;
 	}
 	gzclose(handler);
 	delete buffer;
@@ -281,16 +331,15 @@ void load_other_connections() {
 		//	continue;
 
 		// Append domain of relation to range of start
-		/*
-		 foreach ( unsigned int domain, record->domains)
-		 {
-		 t_map_it a = start_profile->ranges->find(domain);
-		 unsigned int v = (a == start_profile->ranges->end() ? 0 : a->second);
-		 (*start_profile->ranges)[domain] = v + count;
-		 }
-		 start_profile->links++;
-		 */
-		 start_profile->triples++;
+		foreach ( unsigned int domain, record->domains)
+					{
+						t_map_it a = start_profile->ranges->find(domain);
+						unsigned int v = (a == start_profile->ranges->end() ? 0 : a->second);
+						(*start_profile->ranges)[domain] = v + count;
+					}
+		start_profile->links++;
+
+		start_profile->triples++;
 
 		/*
 		 // Append range of relation to domain of end
@@ -378,6 +427,9 @@ void save_files() {
  * Main executable part
  */
 int main() {
+	// Load list of namespaces
+	load_namespaces_list();
+
 	// Load the domain and ranges
 	load_domains_and_ranges();
 

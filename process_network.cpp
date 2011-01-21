@@ -56,6 +56,8 @@ void load_dictionaries() {
 	NB_RANGES = 0;
 	handler = gzopen("data/network/dictionary_ranges.csv.gz", "r");
 	while (gzgets(handler, buffer, buffer_size) != NULL) {
+		if (buffer[0] == '#')
+			continue;
 		std::stringstream ss(buffer);
 		ss >> predicate >> id;
 		range[id] = predicate;
@@ -68,6 +70,8 @@ void load_dictionaries() {
 	NB_DOMAINS = 0;
 	handler = gzopen("data/network/dictionary_domains.csv.gz", "r");
 	while (gzgets(handler, buffer, buffer_size) != NULL) {
+		if (buffer[0] == '#')
+			continue;
 		std::stringstream ss(buffer);
 		ss >> predicate >> id;
 		domain[id] = predicate;
@@ -79,6 +83,8 @@ void load_dictionaries() {
 	std::cout << "Load namespaces\n";
 	handler = gzopen("data/raw/dictionary_namespace.csv.gz", "r");
 	while (gzgets(handler, buffer, buffer_size) != NULL) {
+		if (buffer[0] == '#')
+			continue;
 		std::stringstream ss(buffer);
 		ss >> predicate >> id;
 		ns[id] = predicate;
@@ -203,12 +209,11 @@ void compute_and_save_tf_idf() {
  * Main executable part
  */
 int main() {
-	profiles.resize(13000000);
-
 	// Load dicts and count the domain and ranges
 	load_dictionaries();
 
 	// Load the profiles
+	profiles.resize(13000000);
 	load_profiles();
 
 	// Compute tf_idf

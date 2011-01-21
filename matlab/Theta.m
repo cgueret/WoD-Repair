@@ -27,14 +27,13 @@ entropymean=0;
 entropy2=0;
 
 for nrun=1:Nrunmax,
-    nrun
     x=randperm(n);
     types2=types(x);
    
-[Sigmac,Wr]=EntropyQ(a,types2,n,Q);
+    [Sigmac,Wr]=EntropyQ(a,types2,n,Q);
  
-entropymean=entropymean+Sigmac/Nrunmax;
-entropy2=entropy2+Sigmac*Sigmac/Nrunmax;
+    entropymean=entropymean+Sigmac/Nrunmax;
+    entropy2=entropy2+Sigmac*Sigmac/Nrunmax;
 end
 entropy2=entropy2-entropymean^2;
 deltaentropy=sqrt(entropy2);
