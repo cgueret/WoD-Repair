@@ -10,6 +10,7 @@
 #include "common.h"
 #include <boost/foreach.hpp>
 #define foreach BOOST_FOREACH
+#include <boost/lexical_cast.hpp>
 
 #include "kmlocal-1.7.2/src/KMlocal.h"
 
@@ -32,11 +33,11 @@ unsigned int get_point(unsigned int id) {
 }
 
 unsigned int get_dim(std::string& name) {
-	for (size_t i=0; i < dims.size(); ++i)
+	for (size_t i = 0; i < dims.size(); ++i)
 		if (dims[i] == name)
 			return i;
 	dims.push_back(name);
-	return dims.size()-1;
+	return dims.size() - 1;
 }
 
 /*
@@ -147,38 +148,101 @@ int main() {
 	dataPts.buildKcTree(); // build filtering structure
 
 	// Run clustering algorithm
-	int k = 20; //26
-	KMterm term(1000, 0, 0, 0, // run for 100 stages
-			0.10, // min consec RDL
-			0.10, // min accum RDL
-			3, // max run stages
-			0.50, // init. prob. of acceptance
-			10, // temp. run length
-			0.95); // temp. reduction factor
-	KMfilterCenters ctrs(k, dataPts); // allocate centers
-	KMlocalHybrid kmHybrid(ctrs, term);
-	ctrs = kmHybrid.execute(); // go
-	std::cout << "k =  " << k << "\n";
-	std::cout << "Number of stages: " << kmHybrid.getTotalStages() << "\n";
-	std::cout << "Average distortion: " << ctrs.getDist(false) / double(ctrs.getNPts()) << "\n";
-	KMctrIdxArray closeCtr = new KMctrIdx[dataPts.getNPts()];
-	double* sqDist = new double[dataPts.getNPts()];
-	ctrs.getAssignments(closeCtr, sqDist);
+	std::ofstream error;
+	error.open("data/network/error.csv");
+	for (int k = 1; k < 21; k++) {
+		//	int k = 2; //26
+		KMterm term(1000, 0, 0, 0, // run for 100 stages
+				0.10, // min consec RDL
+				0.10, // min accum RDL
+				3, // max run stages
+				0.50, // init. prob. of acceptance
+				10, // temp. run length
+				0.95); // temp. reduction factor
+		KMfilterCenters ctrs(k, dataPts); // allocate centers
+		KMlocalHybrid kmHybrid(ctrs, term);
+		ctrs = kmHybrid.execute(); // go
+		std::cout << "Number of classes (k):  " << k << "\n";
+		std::cout << "Average distortion: " << ctrs.getDist(false) / double(ctrs.getNPts()) << "\n";
+		KMctrIdxArray closeCtr = new KMctrIdx[dataPts.getNPts()];
+		double* sqDist = new double[dataPts.getNPts()];
+		ctrs.getAssignments(closeCtr, sqDist);
 
-	// Write the pajek network
-	std::ofstream handle;
-	handle.open("data/network/lod-cloud.net");
-	handle << "*Network lod-cloud.net" << std::endl;
-	handle << "*Vertices " << points.size() << std::endl;
-	for (size_t i = 0; i < points.size(); ++i)
-		handle << "\t" << i + 1 << "\t\"" << d[points[i]->id] << "\"" << std::endl;
-	handle << "*Arcs" << std::endl;
-	for (size_t i = 0; i < points.size(); ++i)
-		for (size_t j = 0; j < points[i]->arcs.size(); ++j)
-			handle << "\t" << i + 1 << "\t" << (points[i]->arcs[j]) + 1 << "\t1.0" << std::endl;
-	handle << "*Partition lod-cloud_profiles" << std::endl;
-	handle << "*Vertices " << points.size() << std::endl;
-	for (size_t i = 0; i < points.size(); ++i)
-		handle << "\t" << closeCtr[i] + 1 << std::endl;
-	handle.close();
+		// Compute the relative number of bad connections
+		double c = 0;
+		double tot = 0;
+		for (size_t i = 0; i < points.size(); ++i) {
+			for (size_t j = 0; j < points[i]->arcs.size(); ++j) {
+				tot++;
+				if (closeCtr[i] != closeCtr[(points[i]->arcs[j])])
+					c++;
+			}
+		}
+		std::cout << "Error: " << c / tot << "\n";
+
+		// Compute clustering coefficient
+		double cc = 0;
+		for (size_t i = 0; i < points.size(); ++i) {
+			double cc_node = 0;
+			double cc_tot = 0;
+			for (size_t n1 = 0; n1 < points[i]->arcs.size(); ++n1) {
+				for (size_t n2 = n1 + 1; n2 < points[i]->arcs.size(); ++n2) {
+					if (closeCtr[(points[i]->arcs[n1])] == closeCtr[i] && closeCtr[(points[i]->arcs[n1])] == closeCtr[(points[i]->arcs[n2])]) {
+						cc_tot++;
+						double aa = 0;
+						for (size_t tmp = 0; tmp < points[n1]->arcs.size(); ++tmp)
+							if (points[n1]->arcs[tmp] == n2)
+								aa = 1;
+						if (aa == 0)
+							for (size_t tmp = 0; tmp < points[n2]->arcs.size(); ++tmp)
+								if (points[n2]->arcs[tmp] == n1)
+									aa = 1;
+						cc_node += aa;
+					}
+				}
+				if (cc_tot != 0)
+					cc += cc_node / cc_tot;
+			}
+		}
+		std::cout << "Clustering: " << cc / points.size() << "\n";
+
+		error << k << " " << ctrs.getDist(false) / double(ctrs.getNPts()) << " " << c / tot << " " << cc
+				/ points.size() << std::endl;
+
+		// Write the pajek network
+		std::ofstream handle;
+		handle.open("data/network/lod-cloud-" + boost::lexical_cast<std::string>(k) + ".net");
+		handle << "*Network lod-cloud-" << k << ".net" << std::endl;
+		handle << "*Vertices " << points.size() << std::endl;
+		for (size_t i = 0; i < points.size(); ++i)
+			handle << "\t" << i + 1 << "\t\"" << d[points[i]->id] << "\"" << std::endl;
+		handle << "*Arcs" << std::endl;
+		for (size_t i = 0; i < points.size(); ++i)
+			for (size_t j = 0; j < points[i]->arcs.size(); ++j)
+				handle << "\t" << i + 1 << "\t" << (points[i]->arcs[j]) + 1 << "\t1.0" << std::endl;
+		handle << "*Partition lod-cloud_profiles" << std::endl;
+		handle << "*Vertices " << points.size() << std::endl;
+		for (size_t i = 0; i < points.size(); ++i)
+			handle << "\t" << closeCtr[i] + 1 << std::endl;
+		handle.close();
+
+		// Write an optimal network
+		// In that net nodes are connected with others having the same profile
+		handle.open("data/network/lod-cloud-" + boost::lexical_cast<std::string>(k) + "-opt.net");
+		handle << "*Network lod-cloud-" << k << "-opt.net" << std::endl;
+		handle << "*Vertices " << points.size() << std::endl;
+		for (size_t i = 0; i < points.size(); ++i)
+			handle << "\t" << i + 1 << "\t\"" << d[points[i]->id] << "\"" << std::endl;
+		handle << "*Arcs" << std::endl;
+		for (size_t i = 0; i < points.size(); ++i)
+			for (size_t j = 0; j < points.size(); ++j)
+				if ((i != j) && (closeCtr[i] == closeCtr[j]))
+					handle << "\t" << i + 1 << "\t" << j + 1 << "\t1.0" << std::endl;
+		handle << "*Partition lod-cloud_profiles" << std::endl;
+		handle << "*Vertices " << points.size() << std::endl;
+		for (size_t i = 0; i < points.size(); ++i)
+			handle << "\t" << closeCtr[i] + 1 << std::endl;
+		handle.close();
+	}
+	error.close();
 }

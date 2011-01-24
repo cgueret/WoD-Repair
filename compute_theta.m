@@ -3,9 +3,14 @@ precision=10^(-2);
 loops=100;
 pi=3.14159265358979323846;
 
+out=fopen('output-opt.txt','w');
+
+for ii=1:20
+tot=0;
+for jj=1:5
 
 % Read graph --------------------------------------------------------------
-S=textread(['data/network/lod-cloud.net'],'%q');
+S=textread(['data/network/lod-cloud-',num2str(ii),'-opt.net'],'%q');
 n=str2num(cell2mat(S(4))); % get number of nodes
 i=2*n+6; % offset for the arcs definition
 
@@ -43,6 +48,7 @@ for k=1:nb_profiles
         profile_segr=profile_segr - ( sum(profile==k)/n )*log( sum(profile==k)/n );
     end
 end
+
 
 
 % ?????????????? ----------------------------------------------------------
@@ -143,7 +149,13 @@ end
 Sc=(1/n)*( - sum(log(z).*und) - sum(sum(  triu(A.*  log(W) ,0 )  ))  + sum(sum( triu( M,1) )) - ( sum(log(2*pi*alpha)) )/2  - Q/2 );
 profile_result=Sc
 
-
 [profile_segr np_result-profile_result]
+tot=tot+np_result-profile_result;
+end
 
-    
+tot=tot/5;
+
+fprintf(out, '%d %8.4f\n', ii, tot);
+
+end
+fclose(out);
