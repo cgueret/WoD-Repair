@@ -11,8 +11,11 @@
 #include <boost/foreach.hpp>
 #define foreach BOOST_FOREACH
 #include <boost/lexical_cast.hpp>
+#include <cstdio>
 
 #include "kmlocal-1.7.2/src/KMlocal.h"
+
+#define PRECISION 0.0001
 
 // Convert some predicate text to a dim index
 std::vector<std::string> dims;
@@ -70,6 +73,9 @@ int main() {
 	inFile.open("data/network/profiles-tfidf.csv");
 	while (!inFile.eof()) {
 		inFile >> type >> name_id >> predicate_id >> tfidf;
+
+		if (tfidf < PRECISION)
+			tfidf = 0;
 
 		// Get the dim index
 		std::ostringstream tmp;
@@ -174,7 +180,7 @@ int main() {
 		for (size_t i = 0; i < points.size(); ++i) {
 			for (size_t j = 0; j < points[i]->arcs.size(); ++j) {
 				tot++;
-				if (closeCtr[i] != closeCtr[(points[i]->arcs[j])])
+				if (closeCtr[i] != closeCtr[points[i]->arcs[j]])
 					c++;
 			}
 		}
@@ -186,17 +192,18 @@ int main() {
 			double cc_node = 0;
 			double cc_tot = 0;
 			for (size_t n1 = 0; n1 < points[i]->arcs.size(); ++n1) {
-				for (size_t n2 = n1 + 1; n2 < points[i]->arcs.size(); ++n2) {
-					if (closeCtr[(points[i]->arcs[n1])] == closeCtr[i] && closeCtr[(points[i]->arcs[n1])] == closeCtr[(points[i]->arcs[n2])]) {
+				for (size_t n2 = 0; n2 < points[i]->arcs.size(); ++n2) {
+					if (n1 != n2 && closeCtr[points[i]->arcs[n1]] == closeCtr[i] && closeCtr[points[i]->arcs[n1]]
+							== closeCtr[points[i]->arcs[n2]]) {
 						cc_tot++;
 						double aa = 0;
 						for (size_t tmp = 0; tmp < points[n1]->arcs.size(); ++tmp)
 							if (points[n1]->arcs[tmp] == n2)
 								aa = 1;
-						if (aa == 0)
-							for (size_t tmp = 0; tmp < points[n2]->arcs.size(); ++tmp)
-								if (points[n2]->arcs[tmp] == n1)
-									aa = 1;
+						//if (aa == 0)
+						//	for (size_t tmp = 0; tmp < points[n2]->arcs.size(); ++tmp)
+						//		if (points[n2]->arcs[tmp] == n1)
+						//			aa = 1;
 						cc_node += aa;
 					}
 				}
@@ -206,8 +213,46 @@ int main() {
 		}
 		std::cout << "Clustering: " << cc / points.size() << "\n";
 
-		error << k << " " << ctrs.getDist(false) / double(ctrs.getNPts()) << " " << c / tot << " " << cc
-				/ points.size() << std::endl;
+		// Get the average shortest path length
+		double apl = 0;
+		double comp = 0;
+
+		for (int kk = 1; kk != k + 1; kk++) {
+			std::ofstream handle;
+			handle.open("/tmp/graph.net");
+			handle << "*Network graph.net" << std::endl;
+			handle << "*Vertices " << points.size() << std::endl;
+			for (size_t i = 0; i < points.size(); ++i)
+				handle << "\t" << i + 1 << "\t\"" << d[points[i]->id] << "\"" << std::endl;
+			handle << "*Arcs" << std::endl;
+			for (size_t i = 0; i < points.size(); ++i)
+				for (size_t j = 0; j < points[i]->arcs.size(); ++j)
+					if (closeCtr[i] == closeCtr[points[i]->arcs[j]] && closeCtr[i] + 1 == kk)
+						if (i != points[i]->arcs[j])
+							handle << "\t" << i + 1 << "\t" << (points[i]->arcs[j]) + 1 << "\t1.0" << std::endl;
+			handle.close();
+
+			char buffer[140];
+			FILE* in = popen("python2 shortest_path.py", "r");
+			double v = 0;
+			double v2 = 0;
+			while (fgets(buffer, sizeof(buffer), in) != NULL) {
+				std::stringstream ss(buffer);
+				ss >> v >> v2;
+			}
+			apl += v;
+			comp += v2;
+			pclose(in);
+		}
+		std::cout << "Avg APL: " << apl / k << "\n";
+		std::cout << "Avg comp: " << comp / k << "\n";
+
+		error << k << " ";
+		error << ctrs.getDist(false) / double(ctrs.getNPts()) << " ";
+		error << c / tot << " ";
+		error << cc / points.size() << " ";
+		error << apl / k << " ";
+		error << comp / k << std::endl;
 
 		// Write the pajek network
 		std::ofstream handle;
@@ -219,7 +264,8 @@ int main() {
 		handle << "*Arcs" << std::endl;
 		for (size_t i = 0; i < points.size(); ++i)
 			for (size_t j = 0; j < points[i]->arcs.size(); ++j)
-				handle << "\t" << i + 1 << "\t" << (points[i]->arcs[j]) + 1 << "\t1.0" << std::endl;
+				if (i != points[i]->arcs[j])
+					handle << "\t" << i + 1 << "\t" << (points[i]->arcs[j]) + 1 << "\t1.0" << std::endl;
 		handle << "*Partition lod-cloud_profiles" << std::endl;
 		handle << "*Vertices " << points.size() << std::endl;
 		for (size_t i = 0; i < points.size(); ++i)
@@ -242,6 +288,20 @@ int main() {
 		handle << "*Vertices " << points.size() << std::endl;
 		for (size_t i = 0; i < points.size(); ++i)
 			handle << "\t" << closeCtr[i] + 1 << std::endl;
+		handle.close();
+
+		// Write the content of the profile classes
+		handle.open("data/network/profiles-" + boost::lexical_cast<std::string>(k) + ".csv");
+		handle << "#id D/R predicate value" << std::endl;
+		for (int i = 0; i < ctrs.getK(); i++) {
+			for (int j = 0; j < ctrs.getDim(); ++j) {
+				KMcoord v = ctrs[i][j];
+				if (v < PRECISION)
+					v = 0;
+				if (v != 0)
+					handle << i << " " << dims[j] << " " << v << std::endl;
+			}
+		}
 		handle.close();
 	}
 	error.close();
